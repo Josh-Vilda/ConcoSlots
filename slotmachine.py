@@ -1,57 +1,79 @@
 #!/usr/bin/env python3
 """
-Raspberry Pi 5 Slot Machine - NATIVE LGPIO w/ PULL-UP (Complete Refactor)
+Raspberry Pi 5 Slot Machine - PRO Arcade Build (GPIO Fixed)
 MIDDLE REEL PERFECTLY CENTERED + Wide Outer Spacing
 Infinite spin → Individual stops → 3-of-a-kind wins
-GPIO24/25: 1=Idle, 0=Pressed (Pull-up enabled)
+GPIO: Idle=0, Pulled=1 (external pull-up wiring)
 """
+
 import sys
 import os
 import random
 import pygame
-import lgpio  # Native Pi5 GPIO library
 
-# GPIO Pins
-PIN_CRANK = 24
-PIN_BUTTON_SPIN = 25
-gpio_handle = None
+# GPIO (Windows/Desktop safe fallback)
+try:
+    from gpiozero import Button
+    RUNNING_ON_PI = True
+except ImportError:
+    RUNNING_ON_PI = False
+    Button = None
 
-# Visuals & Game
+# GPIO Pins (BCM numbering)
+PINCRANK = 24
+PINBUTTONSPIN = 25
+PINBUTTONALT = 22  # Reserved
+
+# Display & Visuals
 FULLSCREEN = True
-SYMBOL_FOLDER = ".symbols"
-SYMBOL_SIZE = (256, 256)
-REEL_COUNT = 3
-SPIN_SPEED_INITIAL = 55
+SYMBOLFOLDER = ".symbols"
+SYMBOLSIZE = (256, 256)
+REELCOUNT = 3
+SPINSPEEDINITIAL = 55
 FPS = 60
 BG_COLOR = (0, 64, 133)
-BONUS_SYMBOLS = ["concordia.png", "uqat.png", "ottawa.png"]
+BONUSSYMBOLS = ["concordia.png", "uqat.png", "ottawa.png"]
 
-def setup_gpio():
-    """Setup lgpio with hardware pull-ups (1=idle, 0=pressed)."""
-    global gpio_handle
-    gpio_handle = lgpio.gpiochip_open(0)
-    lgpio.gpio_claim_input(gpio_handle, PIN_CRANK, flags=lgpio.SET_PULL_UP)
-    lgpio.gpio_claim_input(gpio_handle, PIN_BUTTON_SPIN, flags=lgpio.SET_PULL_UP)
-    print("✓ LGPIO ready: Pins 24(crank)/25(spin) w/ pull-up")
+def setup_inputs(callback):
+    """Setup GPIO buttons for external pull-up wiring: idle low=0, active high=1"""
+    if not RUNNING_ON_PI:
+        print("Desktop mode: Use SPACEBAR or on-screen SPIN button")
+        return []
+    try:
+        # pull_up=False: No internal pull-up (matches external wiring)
+        # active_state='active_high': Triggers when pin=1 (pulled)
+        crank = Button(PINCRANK, pull_up=False, bounce_time=0.1, active_state='active_high')
+        crank.when_activated = callback  # Fires on active (high=1)
+
+        spin_btn = Button(PINBUTTONSPIN, pull_up=False, bounce_time=0.1, active_state='active_high')
+        spin_btn.when_activated = callback
+
+        # Alt button reserved
+        # alt_btn = Button(PINBUTTONALT, pull_up=False, bounce_time=0.1, active_state='active_high')
+        # alt_btn.when_activated = callback
+
+        print(f"GPIO setup: Crank={PINCRANK}, Spin={PINBUTTONSPIN} (idle=0, pulled=1)")
+        return [crank, spin_btn]
+    except Exception as e:
+        print(f"GPIO setup failed ({e}): Falling back to keyboard/mouse")
+        return []
 
 def load_symbols():
-    """Load PNG symbols from .symbols/ folder."""
-    if not os.path.exists(SYMBOL_FOLDER):
-        raise FileNotFoundError(f"mkdir '{SYMBOL_FOLDER}' && add 3+ PNGs")
+    if not os.path.exists(SYMBOLFOLDER):
+        raise FileNotFoundError(f"mkdir '{SYMBOLFOLDER}' && add 3+ PNGs/JPGs")
     symbols = []
-    for f in os.listdir(SYMBOL_FOLDER):
+    for f in os.listdir(SYMBOLFOLDER):
         if f.lower().endswith(('.png', '.jpg', '.jpeg')):
-            path = os.path.join(SYMBOL_FOLDER, f)
+            path = os.path.join(SYMBOLFOLDER, f)
             img = pygame.image.load(path).convert_alpha()
-            img = pygame.transform.smoothscale(img, SYMBOL_SIZE)
+            img = pygame.transform.smoothscale(img, SYMBOLSIZE)
             symbols.append((f, img))
     if len(symbols) < 3:
         raise ValueError(f"Need 3+ symbols (got {len(symbols)})")
-    print(f"✓ Loaded symbols: {[n for n, _ in symbols]}")
+    print(f"Loaded symbols: {[n for n, _ in symbols]}")
     return symbols
 
 class Reel:
-    """Individual spinning reel with blur effect."""
     def __init__(self, symbols, x, y):
         self.symbols = symbols
         self.x, self.y = x, y
@@ -70,7 +92,8 @@ class Reel:
     def update(self, dt):
         if not self.spinning:
             return
-        speed = SPIN_SPEED_INITIAL / 16.67 / FPS * 167
+        # Infinite fast spin with deceleration simulation
+        speed = SPINSPEEDINITIAL / 16.67 / FPS * 167
         self.offset += speed * dt
         while self.offset >= 1.0:
             self.offset -= 1.0
@@ -81,17 +104,16 @@ class Reel:
         rect = img.get_rect(center=(self.x, self.y))
         
         if self.spinning:
-            # Seamless spinning blur effect
-            scroll_surf = pygame.Surface(SYMBOL_SIZE, pygame.SRCALPHA)
-            scroll_y = int(self.offset * SYMBOL_SIZE[1])
+            scroll_surf = pygame.Surface(SYMBOLSIZE, pygame.SRCALPHA)
+            scroll_y = int(self.offset * SYMBOLSIZE[1])
             scroll_surf.blit(img, (0, -scroll_y))
             next_img = self.symbols[(self.index + 1) % len(self.symbols)][1]
-            scroll_surf.blit(next_img, (0, SYMBOL_SIZE[1] - scroll_y))
+            scroll_surf.blit(next_img, (0, SYMBOLSIZE[1] - scroll_y))
             surface.blit(scroll_surf, rect)
         else:
             surface.blit(img, rect)
         
-        # Glowing frame
+        # Dynamic frame glow
         color = (0, 255, 100) if not self.spinning else (255, 255, 100)
         pygame.draw.rect(surface, color, rect.inflate(24, 24), 6)
 
@@ -99,42 +121,40 @@ class Reel:
         return self.symbols[self.index][0]
 
 def evaluate_result(reels, symbols):
-    """Check for 3-of-a-kind wins."""
     names = [r.result_name() for r in reels]
     if all(n == names[0] for n in names):
-        bonus = {s[0] for s in symbols if s[0] in BONUS_SYMBOLS}
-        return True, "BONUS WINNER!" if names[0] in bonus else "WINNER!"
+        bonus_set = {s[0] for s in symbols if s[0] in BONUSSYMBOLS}
+        return True, "BONUS WINNER!" if names[0] in bonus_set else "WINNER!"
     return False, ""
 
 def main():
     pygame.init()
-    screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
-    pygame.display.set_caption("🎰 PRO Arcade Slot Machine")
+    screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN if FULLSCREEN else 0)
+    pygame.display.set_caption("PRO Slot Machine")
     clock = pygame.time.Clock()
     
-    # Setup
-    setup_gpio()
     symbols = load_symbols()
     width, height = screen.get_size()
     
-    # Perfectly centered reels (wide outer spacing)
+    # Perfectly centered reels with wide spacing
     center_x = width // 2
     left_x = center_x - 380
     right_x = center_x + 380
     reel_x = [left_x, center_x, right_x]
-    reels = [Reel(symbols, reel_x[i], height // 2) for i in range(REEL_COUNT)]
+    reels = [Reel(symbols, reel_x[i], height // 2) for i in range(REELCOUNT)]
     
-    # Game state
     spins = wins = 0
     result_label = ""
     next_stop = 0
-    prev_crank = 1
-    prev_spin = 1
     
-    def lever_pull():
+    def lever_pull(btn=None):
         nonlocal next_stop, spins, wins, result_label
         
-        if next_stop == 0:  # SPIN ALL (infinite spin)
+        # GPIO filter: only act if active (pin=1)
+        if RUNNING_ON_PI and btn and not btn.is_active:
+            return
+        
+        if next_stop == 0:  # SPIN ALL (infinite free play)
             if any(r.spinning for r in reels):
                 return
             spins += 1
@@ -144,39 +164,30 @@ def main():
             next_stop = 1
             return
         
-        if 1 <= next_stop <= REEL_COUNT:  # STOP ONE BY ONE
+        if 1 <= next_stop <= REELCOUNT:  # Sequential stops
             reels[next_stop - 1].force_stop()
             next_stop += 1
         
-        if next_stop > REEL_COUNT:  # EVALUATE WIN
+        if next_stop > REELCOUNT:  # Evaluate win
             is_win, label = evaluate_result(reels, symbols)
             if is_win:
                 wins += 1
             result_label = label
-            next_stop = 0
+            next_stop = 0  # Auto-loop to next spin
+    
+    controls = setup_inputs(lever_pull)
     
     # UI Elements
     btn_rect = pygame.Rect(center_x - 140, height - 160, 280, 90)
     font_lg = pygame.font.Font(None, 52)
     font_sm = pygame.font.Font(None, 38)
     
-    print("🎰 PRO SLOT READY | GPIO24(crank)/25(spin):1=idle,0=press | SPACE/Mouse works too!")
+    print("🎰 PRO SLOT MACHINE | Controls: GPIO Crank/Buttons, SPACEBAR, CLICK SPIN | ESC=Quit")
     
     running = True
     while running:
         dt = clock.tick(FPS) / 1000.0
         
-        # LGPIO POLLING (1→0 edge detect)
-        crank = lgpio.gpio_read(gpio_handle, PIN_CRANK)
-        spin_btn = lgpio.gpio_read(gpio_handle, PIN_BUTTON_SPIN)
-        if crank == 0 and prev_crank == 1:
-            lever_pull()
-        if spin_btn == 0 and prev_spin == 1:
-            lever_pull()
-        prev_crank = crank
-        prev_spin = spin_btn
-        
-        # Pygame events (keyboard/mouse fallback)
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
@@ -199,38 +210,29 @@ def main():
             reel.draw(screen)
         
         # HUD
-        hud = [f"SPINS: {spins} | WINS: {wins}",
-               result_label]
+        hud = [f"SPINS: {spins} | WINS: {wins}", result_label]
         for i, txt in enumerate(hud):
             clr = (255, 215, 0) if "WIN" in txt else (230, 230, 255)
             surf = font_sm.render(txt, True, clr)
             screen.blit(surf, (30, 35 + i * 42))
         
-        # Control Button
+        # On-screen SPIN button (fallback)
         if next_stop == 0:
             btn_txt, btn_clr = "SPIN ALL!", (0, 255, 80)
-        else:
+        elif 1 <= next_stop <= REELCOUNT:
             btn_txt, btn_clr = f"STOP REEL {next_stop}", (255, 180, 0)
         
         pygame.draw.rect(screen, btn_clr, btn_rect)
         pygame.draw.rect(screen, (255, 255, 255), btn_rect, 6)
         btn_surf = font_lg.render(btn_txt, True, (25, 25, 25))
-        screen.blit(btn_surf, (
-            btn_rect.centerx - btn_surf.get_width() // 2,
-            btn_rect.centery - btn_surf.get_height() // 2
-        ))
-        
-        # GPIO Debug (remove after testing)
-        gpio_debug = f"GPIO:24={crank},25={spin_btn}"
-        screen.blit(font_sm.render(gpio_debug, True, (0, 255, 0)), (30, height - 100))
+        screen.blit(btn_surf, (btn_rect.centerx - btn_surf.get_width() // 2,
+                               btn_rect.centery - btn_surf.get_height() // 2))
         
         pygame.display.flip()
     
     # Cleanup
     pygame.quit()
-    if gpio_handle:
-        lgpio.gpiochip_close(gpio_handle)
-    print("Game over!")
+    sys.exit()
 
 if __name__ == "__main__":
     main()
