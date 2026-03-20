@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Raspberry Pi 5 Slot Machine - FIXED GPIO Polling (No Events)
+Raspberry Pi 5 Slot Machine - LGPIO/rpi-lgpio Polling (Pi5 Native)
 MIDDLE REEL PERFECTLY CENTERED + Wide Outer Spacing
 Infinite spin → Individual stops → 3-of-a-kind wins
 """
@@ -8,7 +8,11 @@ import sys
 import os
 import random
 import pygame
-import RPi.GPIO as GPIO
+try:
+    import RPi.GPIO as GPIO  # Works via rpi-lgpio shim on Pi5
+except ImportError:
+    print("Install: sudo apt install python3-rpi-lgpio")
+    sys.exit(1)
 
 # Pins (BCM mode)
 PIN_CRANK = 24
@@ -25,17 +29,9 @@ BG_COLOR = (0, 64, 133)
 BONUS_SYMBOLS = ["concordia.png", "uqat.png", "ottawa.png"]
 
 def setup_gpio():
-    """Setup GPIO inputs with pull-ups (polling only)."""
     GPIO.setwarnings(False)
     GPIO.setmode(GPIO.BCM)
     GPIO.setup([PIN_CRANK, PIN_BUTTON_SPIN], GPIO.IN, pull_up_down=GPIO.PUD_UP)
-
-def is_button_pressed(pin):
-    """Debounced button check (pressed = LOW)."""
-    if GPIO.input(pin) == GPIO.LOW:
-        pygame.time.wait(50)  # 50ms debounce
-        return GPIO.input(pin) == GPIO.LOW
-    return False
 
 def load_symbols():
     if not os.path.exists(SYMBOL_FOLDER):
@@ -69,8 +65,7 @@ class Reel:
         self.offset = 0.0
 
     def update(self, dt):
-        if not self.spinning:
-            return
+        if not self.spinning: return
         speed = SPIN_SPEED_INITIAL / 16.67 / FPS * 167
         self.offset += speed * dt
         while self.offset >= 1.0:
@@ -104,12 +99,11 @@ def evaluate_result(reels, symbols):
 
 def main():
     pygame.init()
-    info = pygame.display.Info()
     screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
     pygame.display.set_caption("PRO Slot Machine")
     clock = pygame.time.Clock()
     
-    setup_gpio()  # Setup GPIO polling
+    setup_gpio()
     symbols = load_symbols()
     width, height = screen.get_size()
     
@@ -125,17 +119,17 @@ def main():
     
     def lever_pull():
         nonlocal next_stop, spins, wins, result_label
-        if next_stop == 0:  # SPIN ALL
+        if next_stop == 0:
             if any(r.spinning for r in reels): return
             spins += 1
             result_label = ""
             for reel in reels: reel.start_spin()
             next_stop = 1
             return
-        if 1 <= next_stop <= REEL_COUNT:  # STOP ONE
+        if 1 <= next_stop <= REEL_COUNT:
             reels[next_stop - 1].force_stop()
             next_stop += 1
-        if next_stop > REEL_COUNT:  # WIN CHECK
+        if next_stop > REEL_COUNT:
             is_win, label = evaluate_result(reels, symbols)
             if is_win: wins += 1
             result_label = label
@@ -145,24 +139,22 @@ def main():
     font_lg = pygame.font.Font(None, 52)
     font_sm = pygame.font.Font(None, 38)
     
-    print("🎰 PRO SLOT MACHINE READY | GPIO Polling on pins 24/25 | SPACE/MOUSE/BUTTON")
+    print("🎰 LGPIO READY | Pins 24/25 (crank/spin) | SPACE/MOUSE/BUTTON")
     
     running = True
-    last_crank_state = True
-    last_spin_state = True
+    prev_crank = 1
+    prev_spin = 1
     
     while running:
         dt = clock.tick(FPS) / 1000.0
         
-        # POLLING: Check GPIO buttons (debounced)
-        crank_state = GPIO.input(PIN_CRANK)
-        spin_state = GPIO.input(PIN_BUTTON_SPIN)
-        if crank_state == GPIO.LOW and last_crank_state == GPIO.HIGH:
-            lever_pull()
-        if spin_state == GPIO.LOW and last_spin_state == GPIO.HIGH:
-            lever_pull()
-        last_crank_state = crank_state
-        last_spin_state = spin_state
+        # LGPIO COMPATIBLE POLLING
+        crank = GPIO.input(PIN_CRANK)
+        spin_btn = GPIO.input(PIN_BUTTON_SPIN)
+        if crank == 0 and prev_crank == 1: lever_pull()
+        if spin_btn == 0 and prev_spin == 1: lever_pull()
+        prev_crank = crank
+        prev_spin = spin_btn
         
         for event in pygame.event.get():
             if event.type == pygame.QUIT: running = False
@@ -173,27 +165,24 @@ def main():
                 if btn_rect.collidepoint(event.pos): lever_pull()
         
         for reel in reels: reel.update(dt)
-        
         screen.fill(BG_COLOR)
         for reel in reels: reel.draw(screen)
         
-        # HUD
         hud = [f"SPINS: {spins} | WINS: {wins}", result_label]
         for i, txt in enumerate(hud):
             clr = (255, 215, 0) if "WIN" in txt else (230, 230, 255)
             surf = font_sm.render(txt, True, clr)
             screen.blit(surf, (30, 35 + i * 42))
         
-        # BUTTON
         if next_stop == 0:
             btn_txt, btn_clr = "SPIN ALL!", (0, 255, 80)
-        elif 1 <= next_stop <= REEL_COUNT:
+        else:
             btn_txt, btn_clr = f"STOP REEL {next_stop}", (255, 180, 0)
         pygame.draw.rect(screen, btn_clr, btn_rect)
-        pygame.draw.rect(screen, (255, 255, 255), btn_rect, 6)
-        btn_surf = font_lg.render(btn_txt, True, (25, 25, 25))
-        screen.blit(btn_surf, (btn_rect.centerx - btn_surf.get_width() // 2,
-                               btn_rect.centery - btn_surf.get_height() // 2))
+        pygame.draw.rect(screen, (255,255,255), btn_rect, 6)
+        btn_surf = font_lg.render(btn_txt, True, (25,25,25))
+        screen.blit(btn_surf, (btn_rect.centerx - btn_surf.get_width()//2, btn_rect.centery - btn_surf.get_height()//2))
+        
         pygame.display.flip()
     
     pygame.quit()
