@@ -19,10 +19,11 @@ except ImportError:
     Button = None
 
 # Pins
-PINCRANK = 24
-PINBUTTONSPIN = 25
+PINCRANK = 17
+PINBUTTONSPIN = 27
 
 # Visuals
+FULLSCREEN = True 
 SYMBOLFOLDER = ".symbols"
 SYMBOLSIZE = (256, 256)  # 200% bigger
 REELCOUNT = 3
@@ -113,7 +114,7 @@ def evaluate_result(reels, symbols):
 def main():
     pygame.init()
     info = pygame.display.Info()
-    screen = pygame.display.set_mode((int(info.current_w*0.8), int(info.current_h*0.8)))
+    screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
     clock = pygame.time.Clock()
     
     symbols = load_symbols()
