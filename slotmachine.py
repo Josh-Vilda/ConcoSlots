@@ -19,8 +19,8 @@ except ImportError:
     Button = None
 
 # Pins
-PINCRANK = 17
-PINBUTTONSPIN = 27
+PINCRANK = 24
+PINBUTTONSPIN = 25
 
 # Visuals
 FULLSCREEN = True 
