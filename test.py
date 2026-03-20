@@ -1,18 +1,17 @@
-import RPi.GPIO as GPIO
+#!/usr/bin/env python3
+import lgpio
 import time
 
-GPIO.setmode(GPIO.BCM)
-GPIO.setup(24, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-GPIO.setup(25, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+h = lgpio.gpiochip_open(0)  # /dev/gpiochip0
+lgpio.gpio_claim_input(h, 24)  # Pin24
+lgpio.gpio_claim_input(h, 25)  # Pin25
 
-print("Test GPIO24/25: Press buttons (to GND). Ctrl+C to quit.")
+print("LGPIO Test: Press buttons on GPIO24/25 (to GND). Ctrl+C quit.")
 try:
     while True:
-        c24 = GPIO.input(24)
-        c25 = GPIO.input(25)
-        if c24 == 0 or c25 == 0:
-            print(f"Pin24: {c24}, Pin25: {c25} PRESSED!")
-            time.sleep(0.2)  # Debounce
-        time.sleep(0.01)
+        val24 = lgpio.gpio_read(h, 24)
+        val25 = lgpio.gpio_read(h, 25)
+        print(f"GPIO24: {val24}, GPIO25: {val25}", end='\r')
+        time.sleep(0.1)
 except KeyboardInterrupt:
-    GPIO.cleanup()
+    lgpio.gpiochip_close(h)
