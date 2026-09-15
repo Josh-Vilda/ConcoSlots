@@ -99,7 +99,7 @@ REELCOUNT = 3
 SPINSPEEDINITIAL = 55
 FPS = 60
 BG_COLOR = (0, 64, 133)
-BONUSSYMBOLS = ["concordia.png", "uqat.png", "ottawa.png"]
+BONUSSYMBOLS = ["concordia.png"]
 
 def load_symbols():
     if not os.path.exists(SYMBOLFOLDER):
@@ -119,6 +119,7 @@ def load_symbols():
     if len(symbols) < 3:
         raise ValueError(f"❌ Need 3+ symbols (got {len(symbols)})")
     print(f"✅ {len(symbols)} symbols loaded")
+    print(f"   SYMBOLS: {symbols}")
     return symbols
 
 class Reel:
@@ -191,11 +192,20 @@ def main():
     spins = wins = 0
     result_label = ""
     next_stop = 0
+    round_complete = False
     
     def lever_pull():
-        nonlocal next_stop, spins, wins, result_label
+        nonlocal next_stop, spins, wins, result_label, round_complete
         
         if next_stop == 0:  # SPIN!
+            # if previous round completed, reshuffle each reel before starting
+            if round_complete:
+                for reel in reels:
+                    reel.symbols = random.sample(symbols, len(symbols))
+                    reel.index = random.randint(0, len(reel.symbols) - 1)
+                    reel.offset = 0.0
+                round_complete = False
+
             if any(r.spinning for r in reels): return
             spins += 1
             result_label = ""
@@ -211,6 +221,8 @@ def main():
             is_win, label = evaluate_result(reels, symbols)
             if is_win: wins += 1
             result_label = label
+            # mark round complete; reshuffle happens on next spin press
+            round_complete = True
             next_stop = 0
     
     # UI
