@@ -98,7 +98,8 @@ SYMBOLSIZE = (256, 256)
 REELCOUNT = 3
 SPINSPEEDINITIAL = 55
 FPS = 60
-BG_COLOR = (0, 64, 133)
+# BG_COLOR = (0, 64, 133)
+BG = ["./background.png"]
 BONUSSYMBOLS = ["concordia.png"]
 
 def load_symbols():
@@ -184,6 +185,9 @@ def main():
     
     symbols = load_symbols()
     width, height = screen.get_size()
+
+    background = pygame.image.load("./background.png").convert()
+    background = pygame.transform.smoothscale(background, (width, height))
     
     center_x = width // 2
     reel_positions = [center_x - 380, center_x, center_x + 380]
@@ -253,7 +257,7 @@ def main():
         for reel in reels: reel.update(dt)
         
         # Render
-        screen.fill(BG_COLOR)
+        screen.blit(background, (0, 0))
         for reel in reels: reel.draw(screen)
         
         # HUD
@@ -279,6 +283,7 @@ def main():
     
     cleanup_lgpio()
     pygame.quit()
+
 
 if __name__ == "__main__":
     main()
